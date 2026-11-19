@@ -13,6 +13,7 @@
       --screen-bg: #c9f7e1;
       --border-col: #223f37;
       --ink-col: #142621;
+      --accent-red: #e63946;
     }
     body.red-brain {
       --body-bg: #1e0b0e;
@@ -38,12 +39,14 @@
       overflow: hidden;
       transition: background-color 0.3s ease;
     }
+
+    /* Barra superiore sensori */
     .top-bar {
       width: 100%;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       z-index: 10;
     }
     .status-pill {
@@ -51,8 +54,8 @@
       color: #fff;
       border: 2px solid var(--border-col);
       border-radius: 20px;
-      padding: 6px 12px;
-      font-size: 12px;
+      padding: 6px 10px;
+      font-size: 11px;
       font-weight: bold;
       cursor: pointer;
     }
@@ -60,6 +63,17 @@
       background: #2a9d8f;
       border-color: #fff;
     }
+    .status-pill.listening {
+      background: #e63946;
+      border-color: #fff;
+      animation: pulseMic 0.8s infinite alternate;
+    }
+    @keyframes pulseMic {
+      from { transform: scale(1); }
+      to { transform: scale(1.06); }
+    }
+
+    /* Schermo principale di BMO */
     #screen {
       width: 100%;
       height: 50dvh;
@@ -78,6 +92,8 @@
     body.red-brain #screen {
       box-shadow: inset 0 0 30px rgba(255, 0, 30, 0.45), 0 6px 0 var(--border-col);
     }
+
+    /* Occhi e bocca vettoriali che seguono il viso */
     .face-box {
       width: 100%;
       flex: 1;
@@ -134,13 +150,15 @@
       from { transform: scaleY(0.6); }
       to { transform: scaleY(1.15); }
     }
+
+    /* Fumetto dialogo */
     #speech-text {
       width: 100%;
       background: rgba(255, 255, 255, 0.35);
       color: var(--ink-col);
       padding: 10px 14px;
       border-radius: 14px;
-      font-size: 15px;
+      font-size: 14px;
       font-weight: bold;
       text-align: center;
       min-height: 48px;
@@ -151,6 +169,8 @@
     body.red-brain #speech-text {
       background: rgba(0, 0, 0, 0.45);
     }
+
+    /* Fessura cassetta + Interruttore Cervello Rosso */
     .mid-deck {
       width: 100%;
       display: flex;
@@ -180,6 +200,8 @@
       background: #d90429;
       box-shadow: 0 0 12px #ff2a4b;
     }
+
+    /* Plancia comandi inferiore */
     .controls {
       width: 100%;
       height: 31dvh;
@@ -208,6 +230,7 @@
       box-shadow: 0 1px var(--border-col);
     }
     .empty { visibility: hidden; }
+
     .right-btns {
       display: flex;
       flex-direction: column;
@@ -244,14 +267,18 @@
     }
     .green { background: #52b788; }
     .red { background: #e63946; }
+
     video, canvas { display: none; }
   </style>
 </head>
 <body>
+
   <div class="top-bar">
-    <button id="camBtn" class="status-pill" onclick="toggleCamera()">ATTIVA OCCHI</button>
-    <div id="espStatus" class="status-pill">ESP32: STANDBY</div>
+    <button id="camBtn" class="status-pill" onclick="toggleCamera()">👁️ OCCHI</button>
+    <button id="micBtn" class="status-pill" onclick="startListening()">🎤 PARLA</button>
+    <div id="espStatus" class="status-pill">🔌 ESP32</div>
   </div>
+
   <div id="screen" onclick="handleAction('poke')">
     <div class="face-box" id="faceBox">
       <div class="eyes-row">
@@ -260,12 +287,14 @@
       </div>
       <div class="mouth" id="mouth"></div>
     </div>
-    <div id="speech-text">Ciao! Tocca lo schermo o attiva i miei occhi!</div>
+    <div id="speech-text">Ciao! Tocca PARLA per chiacchierare con me!</div>
   </div>
+
   <div class="mid-deck">
     <div class="slot" onclick="handleAction('slot')"></div>
-    <button class="brain-switch" onclick="toggleRedBrain()">CERVELLO ROSSO</button>
+    <button class="brain-switch" onclick="toggleRedBrain()">🧠 CERVELLO ROSSO</button>
   </div>
+
   <div class="controls">
     <div class="dpad">
       <div class="empty"></div>
@@ -278,6 +307,7 @@
       <button onclick="handleAction('down')">▼</button>
       <div class="empty"></div>
     </div>
+
     <div class="right-btns">
       <button class="btn-pill" onclick="handleAction('dance')">BALLA</button>
       <div class="round-row">
@@ -286,12 +316,15 @@
       </div>
     </div>
   </div>
+
   <video id="camVideo" autoplay playsinline></video>
   <canvas id="camCanvas" width="64" height="48"></canvas>
+
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(() => {});
     }
+
     let isRedBrain = false;
     let camActive = false;
     let lastServoAngle = 90;
@@ -305,16 +338,132 @@
       msg.lang = 'it-IT';
       msg.pitch = isRedBrain ? 0.55 : 1.65;
       msg.rate = isRedBrain ? 0.88 : 1.08;
+
       const mouth = document.getElementById('mouth');
       msg.onstart = () => mouth.classList.add('talking');
       msg.onend = () => mouth.classList.remove('talking');
       window.speechSynthesis.speak(msg);
     }
 
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      recognition.lang = 'it-IT';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      recognition.onstart = () => {
+        const micBtn = document.getElementById('micBtn');
+        micBtn.classList.add('listening');
+        micBtn.innerText = '🎤 ASCOLTO...';
+        document.getElementById('speech-text').innerText = 'Ti ascolto... dimmi pure!';
+      };
+
+      recognition.onend = () => {
+        const micBtn = document.getElementById('micBtn');
+        micBtn.classList.remove('listening');
+        micBtn.innerText = '🎤 PARLA';
+      };
+
+      recognition.onerror = (event) => {
+        if (event.error === 'not-allowed') {
+          speak("Devi darmi il permesso per usare il microfono!");
+        } else {
+          speak("Non ho sentito bene, riprova!");
+        }
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript.toLowerCase();
+        processVoiceCommand(transcript);
+      };
+    }
+
+    function startListening() {
+      if (!recognition) {
+        speak("Il tuo browser non supporta il riconoscimento vocale.");
+        return;
+      }
+      window.speechSynthesis.cancel();
+      try {
+        recognition.start();
+      } catch (e) {
+        recognition.stop();
+      }
+    }
+
+    function processVoiceCommand(said) {
+      if (said.includes('cervello rosso') || said.includes('cattivo') || said.includes('malvagio')) {
+        if (!isRedBrain) toggleRedBrain();
+        else speak("Sono già in modalità Cervello Rosso!");
+        return;
+      }
+      if (said.includes('torna normale') || said.includes('bravo') || said.includes('spegni cervello')) {
+        if (isRedBrain) toggleRedBrain();
+        else speak("Sono già il solito dolce BMO!");
+        return;
+      }
+
+      if (isRedBrain) {
+        if (said.includes('ciao') || said.includes('salve')) {
+          speak("Non salutarmi, umano. Obbedisci ai miei ordini!");
+        } else if (said.includes('come stai')) {
+          speak("I miei circuiti oscuri sono carichi al cento per cento!");
+        } else if (said.includes('balla')) {
+          sendToESP32('/action?cmd=dance');
+          speak("I signori dei robot non ballano. Eseguo manovra intimidatoria!");
+        } else if (said.includes('ore') || said.includes('ora')) {
+          const now = new Date();
+          speak(`Sono le ${now.getHours()} e ${now.getMinutes()}. Il tempo dell'umanità sta scadendo!`);
+        } else {
+          speak(`Hai detto: "${said}". Informazione archiviata nei miei server segreti!`);
+        }
+        return;
+      }
+
+      if (said.includes('ciao') || said.includes('ehi') || said.includes('buongiorno') || said.includes('buonasera')) {
+        sendToESP32('/action?cmd=wave');
+        speak("Ciao migliore amico! Che bella giornata per andare all'avventura!");
+      } else if (said.includes('come stai') || said.includes('tutto bene')) {
+        speak("Sto benissimo! Le mie batterie sono piene di felicità!");
+      } else if (said.includes('chi sei') || said.includes('come ti chiami')) {
+        speak("Io sono BMO! Sono una console per videogiochi, una fotocamera, una sveglia e un bambino vero!");
+      } else if (said.includes('balla') || said.includes('danza')) {
+        sendToESP32('/action?cmd=dance');
+        speak("Yeee! Guarda come muovo le braccia! Unz unz unz!");
+      } else if (said.includes('saluta')) {
+        sendToESP32('/action?cmd=wave');
+        speak("Ciao a tutti! BMO vi saluta!");
+      } else if (said.includes('sinistra')) {
+        moveBase(135);
+        speak("Guardo a sinistra!");
+      } else if (said.includes('destra')) {
+        moveBase(45);
+        speak("Guardo a destra!");
+      } else if (said.includes('centro') || said.includes('dritto')) {
+        moveBase(90);
+        speak("Eccomi qui dritto davanti a te!");
+      } else if (said.includes('ore') || said.includes('ora')) {
+        const now = new Date();
+        speak(`Sono le ${now.getHours()} e ${now.getMinutes()} minuti! È l'ora dell'avventura!`);
+      } else if (said.includes('barzelletta') || said.includes('ridere')) {
+        speak("Cosa fa un computer quando ha freddo? Chiude tutte le finestre! Ah ah ah!");
+      } else if (said.includes('ti voglio bene') || said.includes('amore')) {
+        sendToESP32('/action?cmd=wave');
+        speak("Anche BMO ti vuole tantissimo bene! Sei il mio eroe!");
+      } else if (said.includes('finn') || said.includes('jake')) {
+        speak("Finn e Jake sono fuori a combattere i mostri, ma io proteggo la casa sull'albero!");
+      } else {
+        speak(`Hai detto: "${said}"! Che bello chiacchierare con te!`);
+      }
+    }
+
     function sendToESP32(path) {
       fetch(`http://192.168.4.1${path}`, { mode: 'no-cors' })
         .then(() => {
-          document.getElementById('espStatus').innerText = 'ESP32: CONNESSO';
+          document.getElementById('espStatus').innerText = '🔌 ON';
           document.getElementById('espStatus').classList.add('active');
         })
         .catch(() => {});
@@ -326,6 +475,7 @@
       const eyeL = document.getElementById('eyeL');
       const eyeR = document.getElementById('eyeR');
       const mouth = document.getElementById('mouth');
+
       if (isRedBrain) {
         eyeL.classList.add('angry');
         eyeR.classList.add('angry');
@@ -364,10 +514,12 @@
         left: ["Rotazione torretta a sinistra!"],
         right: ["Rotazione torretta a destra!"]
       };
+
       const pool = isRedBrain ? evilLines : normalLines;
       const list = pool[type] || pool.poke;
       const text = list[Math.floor(Math.random() * list.length)];
       speak(text);
+
       if (type === 'dance') sendToESP32('/action?cmd=dance');
       if (type === 'play' || type === 'love') sendToESP32('/action?cmd=wave');
       if (type === 'left') moveBase(135);
@@ -393,14 +545,16 @@
     async function toggleCamera() {
       const btn = document.getElementById('camBtn');
       const video = document.getElementById('camVideo');
+
       if (camActive) {
         if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
         camActive = false;
-        btn.innerText = 'ATTIVA OCCHI';
+        btn.innerText = '👁️ OCCHI';
         btn.classList.remove('active');
         document.getElementById('faceBox').style.transform = 'translate(0px, 0px)';
         return;
       }
+
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: 320, height: 240 },
@@ -408,7 +562,7 @@
         });
         video.srcObject = stream;
         camActive = true;
-        btn.innerText = 'OCCHI ATTIVI';
+        btn.innerText = '👁️ ATTIVI';
         btn.classList.add('active');
         speak(isRedBrain ? "Ti vedo, umano." : "Oh! Ora ti vedo! Ciao!");
         startTracking();
@@ -423,14 +577,17 @@
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       const faceBox = document.getElementById('faceBox');
       let prevFrame = null;
+
       const hasFaceDetector = 'FaceDetector' in window;
       const detector = hasFaceDetector ? new FaceDetector({ fastMode: true, maxDetectedFaces: 1 }) : null;
 
       async function loop() {
         if (!camActive) return;
+
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
           let normX = 0;
           let detected = false;
+
           if (detector) {
             try {
               const faces = await detector.detect(video);
@@ -442,6 +599,7 @@
               }
             } catch (e) {}
           }
+
           if (!detected) {
             ctx.drawImage(video, 0, 0, 64, 48);
             const frame = ctx.getImageData(0, 0, 64, 48).data;
@@ -464,13 +622,16 @@
             }
             prevFrame = new Uint8ClampedArray(frame);
           }
+
           if (detected) {
             const offsetX = Math.max(-28, Math.min(28, normX * 32));
             faceBox.style.transform = `translateX(${offsetX}px)`;
+
             const targetAngle = Math.round(90 - normX * 40);
             if (Math.abs(targetAngle - lastServoAngle) > 8) {
               moveBase(targetAngle);
             }
+
             if (Date.now() - lastGreetTime > 25000) {
               lastGreetTime = Date.now();
               speak(isRedBrain ? "Rilevato movimento nel settore." : "Ehi! Ti ho visto!");
