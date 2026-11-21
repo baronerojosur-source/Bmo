@@ -1,20 +1,31 @@
-const CACHE_NAME = 'bmo-robot-v2';
-const ASSETS = ['./', './index.html', './manifest.json', './icon.svg'];
+const CACHE_NAME = 'bmo-pwa-v1';
+const ASSETS = [
+  './',
+  './index.html',
+  './manifest.json'
+];
 
-self.addEventListener('install', (e) => {
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
+  );
   self.skipWaiting();
-  e.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
 });
 
-self.addEventListener('activate', (e) => {
-  e.waitUntil(
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
     )
   );
+  self.clients.claim();
 });
 
-self.addEventListener('fetch', (e) => {
-  if (e.request.url.includes('192.168.4.1')) return;
-  e.respondWith(caches.match(e.request).then((res) => res || fetch(e.request)));
+self.addEventListener('fetch', (event) => {
+  if (event.request.url.includes('192.168.4.1') || event.request.url.includes('pollinations.ai')) {
+    return;
+  }
+  event.respondWith(
+    caches.match(event.request).then((cached) => cached || fetch(event.request))
+  );
 });
