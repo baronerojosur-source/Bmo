@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bmo-pwa-v1';
+const CACHE_NAME = 'bmo-pwa-v3';
 const ASSETS = [
   './',
   './index.html',
