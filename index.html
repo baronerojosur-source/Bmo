@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#63d2b4">
+  <title>BMO OS</title>
+  <link rel="manifest" href="manifest.json">
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <style>
+    :root {
+      --bg-color: #63d2b4;
+      --face-color: #0b261f;
+      --accent-color: #164a3d;
+      --btn-bg: rgba(11, 38, 31, 0.15);
+    }
+    body.red-mode {
+      --bg-color: #d91e2a;
+      --face-color: #140002;
+      --accent-color: #4a040a;
+      --btn-bg: rgba(20, 0, 2, 0.25);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body {
+      background-color: var(--bg-color);
+      color: var(--face-color);
+      font-family: 'Courier New', Courier, monospace;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: center;
+      transition: background-color 0.5s, color 0.5s;
+    }
+    #video {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      width: 1px;
+      height: 1px;
+      opacity: 0.01;
+      pointer-events: none;
+    }
+    #status-bar {
+      width: 100%;
+      padding: 10px 16px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: bold;
+      opacity: 0.75;
+    }
+    #face-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      width: 100%;
+      position: relative;
+    }
+    .eyes {
+      display: flex;
+      gap: 110px;
+      margin-bottom: 45px;
+      transition: transform 0.15s ease-out;
+    }
+    .eye {
+      width: 34px;
+      height: 34px;
+      background-color: var(--face-color);
+      border-radius: 50%;
+      transition: all 0.2s;
+    }
+    .eye.blink { height: 4px; transform: translateY(15px); }
+    .eye.sleep { height: 4px; width: 42px; border-radius: 2px; }
+    body.red-mode .eye {
+      border-radius: 50% 50% 45% 45%;
+      clip-path: polygon(0 25%, 100% 0, 100% 100%, 0% 100%);
+    }
+    .eyes .eye:last-child {
+      clip-path: none;
+    }
+    body.red-mode .eyes .eye:last-child {
+      clip-path: polygon(0 0, 100% 25%, 100% 100%, 0% 100%);
+    }
+    #mouth {
+      width: 90px;
+      height: 42px;
+      border: 7px solid var(--face-color);
+      border-top: none;
+      border-radius: 0 0 50px 50px;
+      transition: all 0.2s;
+    }
+    #mouth.talking {
+      height: 48px;
+      background-color: var(--face-color);
+      border-radius: 25px;
+      animation: talk 0.25s infinite alternate;
+    }
+    #mouth.sad {
+      border: 7px solid var(--face-color);
+      border-bottom: none;
+      border-radius: 50px 50px 0 0;
+      height: 30px;
+    }
+    #mouth.sleep {
+      width: 24px;
+      height: 24px;
+      border: 5px solid var(--face-color);
+      border-radius: 50%;
+    }
+    @keyframes talk {
+      from { transform: scaleY(0.4); }
+      to { transform: scaleY(1.1); }
+    }
+    #subtitle {
+      min-height: 48px;
+      max-width: 85%;
+      text-align: center;
+      font-size: 18px;
+      font-weight: bold;
+      margin-top: 30px;
+      padding: 8px 14px;
+      border-radius: 12px;
+      background: var(--btn-bg);
+    }
+    #controls {
+      width: 100%;
+      padding: 16px;
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    button {
+      background: var(--btn-bg);
+      border: 3px solid var(--face-color);
+      color: var(--face-color);
+      font-family: inherit;
+      font-weight: bold;
+      font-size: 14px;
+      padding: 10px 14px;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+    button:active { transform: scale(0.95); }
+  </style>
+</head>
+<body>
+  <video id="video" autoplay muted playsinline></video>
+
+  <div id="status-bar">
+    <span id="cam-status">👁️ Avvio visione...</span>
+    <span id="esp-status">ESP32: Pronto</span>
+  </div>
+
+  <div id="face-container" onclick="wakeUp()">
+    <div class="eyes" id="eyes">
+      <div class="eye" id="eye-left"></div>
+      <div class="eye" id="eye-right"></div>
+    </div>
+    <div id="mouth"></div>
+    <div id="subtitle">Ciao! Sono BMO!</div>
+  </div>
+
+  <div id="controls">
+    <button onclick="startListening()">🎤 PARLA</button>
+    <button onclick="learnFacePrompt()">📸 IMPARA VISO</button>
+    <button onclick="toggleRedMode()">🧠 CERVELLO ROSSO</button>
+  </div>
+
+  <script>
+    const ESP_IP = "http://192.168.4.1";
+    const MODEL_URL = "https://justadudewhohacks.github.io/face-api.js/models";
+
+    let isRedMode = false;
+    let isSleeping = false;
+    let lastActivity = Date.now();
+    let lastGreetedPerson = "";
+    let lastEmotionTime = 0;
+    let lastServoAngle = 90;
+    let currentDescriptor = null;
+    let faceMatcher = null;
+    let knownFaces = [];
+
+    const video = document.getElementById('video');
+    const eyes = document.getElementById('eyes');
+    const eyeL = document.getElementById('eye-left');
+    const eyeR = document.getElementById('eye-right');
+    const mouth = document.getElementById('mouth');
+    const subtitle = document.getElementById('subtitle');
+    const camStatus = document.getElementById('cam-status');
+    const espStatus = document.getElementById('esp-status');
+
+    function sendESP(path) {
+      fetch(ESP_IP + path, { mode: 'no-cors' })
+        .then(() => espStatus.textContent = "ESP32: OK")
+        .catch(() => espStatus.textContent = "ESP32: Offline");
+    }
+
+    function speak(text) {
+      wakeUp();
+      subtitle.textContent = text;
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = 'it-IT';
+      utter.pitch = isRedMode ? 0.65 : 1.35;
+      utter.rate = isRedMode ? 0.92 : 1.08;
+
+      utter.onstart = () => mouth.classList.add('talking');
+      utter.onend = () => mouth.classList.remove('talking');
+      window.speechSynthesis.speak(utter);
+    }
+
+    function toggleRedMode() {
+      isRedMode = !isRedMode;
+      document.body.classList.toggle('red-mode', isRedMode);
+      sendESP(`/mode?red=${isRedMode ? 1 : 0}`);
+      if (isRedMode) {
+        sendESP('/action?cmd=happy');
+        speak("Modalità cervello rosso attivata. Ora comando io, umano!");
+      } else {
+        sendESP('/action?cmd=greet');
+        speak("Yeee! BMO è tornato buono!");
+      }
+    }
+
+    function resetInactivity() {
+      lastActivity = Date.now();
+      if (isSleeping) wakeUp();
+    }
+
+    function wakeUp() {
+      lastActivity = Date.now();
+      if (!isSleeping) return;
+      isSleeping = false;
+      eyeL.classList.remove('sleep');
+      eyeR.classList.remove('sleep');
+      mouth.classList.remove('sleep');
+      subtitle.textContent = isRedMode ? "Chi osa svegliarmi?!" : "Oh! Ciao di nuovo!";
+    }
+
+    setInterval(() => {
+      if (!isSleeping && Date.now() - lastActivity > 40000) {
+        isSleeping = true;
+        eyeL.classList.add('sleep');
+        eyeR.classList.add('sleep');
+        mouth.className = 'sleep';
+        eyes.style.transform = 'translate(0px, 0px)';
+        subtitle.textContent = "Zzz... BMO fa la nanna...";
+      } else if (!isSleeping) {
+        eyeL.classList.add('blink');
+        eyeR.classList.add('blink');
+        setTimeout(() => {
+          eyeL.classList.remove('blink');
+          eyeR.classList.remove('blink');
+        }, 160);
+      }
+    }, 4500);
+
+    function loadStoredFaces() {
+      const saved = localStorage.getItem('bmo_faces');
+      if (!saved) return;
+      try {
+        const parsed = JSON.parse(saved);
+        knownFaces = parsed.map(item => new faceapi.LabeledFaceDescriptors(
+          item.label,
+          item.descriptors.map(d => new Float32Array(d))
+        ));
+        if (knownFaces.length > 0) {
+          faceMatcher = new faceapi.FaceMatcher(knownFaces, 0.55);
+        }
+      } catch (e) { console.error(e); }
+    }
+
+    function saveFace(name, descriptor) {
+      if (!descriptor) {
+        speak("Non riesco a vederti bene! Mettiti davanti alla fotocamera.");
+        return;
+      }
+      const cleanName = name.trim();
+      const existing = knownFaces.find(f => f.label.toLowerCase() === cleanName.toLowerCase());
+      if (existing) {
+        existing.descriptors.push(descriptor);
+      } else {
+        knownFaces.push(new faceapi.LabeledFaceDescriptors(cleanName, [descriptor]));
+      }
+      const serializable = knownFaces.map(f => ({
+        label: f.label,
+        descriptors: f.descriptors.map(d => Array.from(d))
+      }));
+      localStorage.setItem('bmo_faces', JSON.stringify(serializable));
+      faceMatcher = new faceapi.FaceMatcher(knownFaces, 0.55);
+      lastGreetedPerson = cleanName;
+      sendESP('/action?cmd=greet');
+      speak(isRedMode
+        ? `Ho memorizzato la tua faccia, ${cleanName}. Non puoi più nasconderti.`
+        : `Piacere di conoscerti ${cleanName}! BMO ricorderà il tuo viso!`
+      );
+    }
+
+    function learnFacePrompt() {
+      const name = prompt("Come ti chiami?");
+      if (name) saveFace(name, currentDescriptor);
+    }
+
+    async function initVision() {
+      try {
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+          faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+          faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+          faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL)
+        ]);
+        loadStoredFaces();
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+        video.srcObject = stream;
+        camStatus.textContent = "👁️ Visione attiva";
+        setInterval(detectFaceLoop, 600);
+      } catch (err) {
+        camStatus.textContent = "⚠️ Fotocamera non disponibile";
+      }
+    }
+
+    async function detectFaceLoop() {
+      if (video.readyState !== 4) return;
+      const detection = await faceapi
+        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+        .withFaceLandmarks()
+        .withFaceExpressions()
+        .withFaceDescriptor();
+
+      if (!detection) {
+        currentDescriptor = null;
+        return;
+      }
+
+      resetInactivity();
+      currentDescriptor = detection.descriptor;
+
+      const box = detection.detection.box;
+      const centerX = box.x + box.width / 2;
+      const centerY = box.y + box.height / 2;
+      const normX = (centerX / video.videoWidth) - 0.5;
+      const normY = (centerY / video.videoHeight) - 0.5;
+
+      const moveX = Math.max(-28, Math.min(28, -normX * 70));
+      const moveY = Math.max(-18, Math.min(18, normY * 45));
+      eyes.style.transform = `translate(${moveX}px, ${moveY}px)`;
+
+      const targetAngle = Math.round(90 + (-normX * 80));
+      if (Math.abs(targetAngle - lastServoAngle) >= 8) {
+        lastServoAngle = targetAngle;
+        sendESP(`/base?angle=${targetAngle}`);
+      }
+
+      if (faceMatcher) {
+        const match = faceMatcher.findBestMatch(detection.descriptor);
+        if (match.label !== 'unknown' && match.label !== lastGreetedPerson) {
+          lastGreetedPerson = match.label;
+          sendESP('/action?cmd=greet');
+          speak(isRedMode
+            ? `Oh, guarda chi si rivede. Sei ancora tu, ${match.label}.`
+            : `Ciao ${match.label}! Che bello rivederti!`
+          );
+        }
+      }
+
+      if (Date.now() - lastEmotionTime > 15000) {
+        const exp = detection.expressions;
+        if (exp.sad > 0.65) {
+          lastEmotionTime = Date.now();
+          mouth.className = 'sad';
+          sendESP('/action?cmd=comfort');
+          speak(isRedMode
+            ? "Stai piangendo? Patetico. Ma forse ti concedo un abbraccio."
+            : "Oh no, sembri triste! Non preoccuparti, BMO è qui con te!"
+          );
+          setTimeout(() => { if (!isSleeping) mouth.className = ''; }, 5000);
+        } else if (exp.happy > 0.85) {
+          lastEmotionTime = Date.now();
+          mouth.className = '';
+          sendESP('/action?cmd=happy');
+          speak(isRedMode
+            ? "Smettila di sorridere così tanto, mi dai sui nervi!"
+            : "Che bel sorriso! Anche BMO è super felice!"
+          );
+        }
+      }
+    }
+
+    function startListening() {
+      wakeUp();
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        speak("Il browser non supporta il microfono.");
+        return;
+      }
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'it-IT';
+      subtitle.textContent = "🎤 Ti ascolto...";
+
+      recognition.onresult = async (event) => {
+        const transcript = event.results[0][0].transcript;
+        subtitle.textContent = `Tu: "${transcript}"`;
+        await handleUserCommand(transcript);
+      };
+      recognition.onerror = () => subtitle.textContent = "Non ho capito, riprova!";
+      recognition.start();
+    }
+
+    async function handleUserCommand(text) {
+      const lower = text.toLowerCase();
+
+      const nameMatch = lower.match(/(?:io sono|mi chiamo)\s+([a-zàèéìòù]+)/i);
+      if (nameMatch && nameMatch[1]) {
+        const newName = nameMatch[1].charAt(0).toUpperCase() + nameMatch[1].slice(1);
+        saveFace(newName, currentDescriptor);
+        return;
+      }
+
+      if (lower.includes("balla")) {
+        sendESP('/action?cmd=dance');
+        speak(isRedMode ? "Ballo solo perché ne ho voglia io!" : "Guarda come balla BMO!");
+        return;
+      }
+      if (lower.includes("saluta")) {
+        sendESP('/action?cmd=greet');
+        speak("Ciao a tutti! Sono BMO!");
+        return;
+      }
+
+      subtitle.textContent = "💭 BMO sta pensando...";
+      const systemPrompt = isRedMode
+        ? "Sei BMO di Adventure Time in modalità Cervello Rosso: sei malvagio, sarcastico, arrogante ma divertente. Rispondi in italiano in massimo 2 frasi brevi."
+        : "Sei BMO di Adventure Time: sei dolce, giocoso, ingenuo, entusiasta e parli di te in terza persona come BMO. Rispondi in italiano in massimo 2 frasi brevi.";
+
+      try {
+        const url = `https://text.pollinations.ai/${encodeURIComponent(text)}?system=${encodeURIComponent(systemPrompt)}`;
+        const res = await fetch(url);
+        const reply = await res.text();
+        speak(reply);
+      } catch (e) {
+        speak("Ops! La mia connessione al cloud fa i capricci!");
+      }
+    }
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+    window.addEventListener('load', initVision);
+  </script>
+</body>
+</html>
