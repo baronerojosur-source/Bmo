@@ -6,6 +6,8 @@
   <meta name="theme-color" content="#63d2b4">
   <title>BMO OS</title>
   <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-512.png">
   <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
   <style>
     :root {
@@ -50,7 +52,7 @@
       justify-content: space-between;
       font-size: 13px;
       font-weight: bold;
-      opacity: 0.85;
+      opacity: 0.8;
     }
     #face-container {
       flex: 1;
@@ -80,9 +82,7 @@
       border-radius: 50% 50% 45% 45%;
       clip-path: polygon(0 25%, 100% 0, 100% 100%, 0% 100%);
     }
-    .eyes .eye:last-child {
-      clip-path: none;
-    }
+    .eyes .eye:last-child { clip-path: none; }
     body.red-mode .eyes .eye:last-child {
       clip-path: polygon(0 0, 100% 25%, 100% 100%, 0% 100%);
     }
@@ -129,9 +129,9 @@
     }
     #controls {
       width: 100%;
-      padding: 16px;
+      padding: 14px;
       display: flex;
-      gap: 10px;
+      gap: 8px;
       justify-content: center;
       flex-wrap: wrap;
     }
@@ -141,14 +141,10 @@
       color: var(--face-color);
       font-family: inherit;
       font-weight: bold;
-      font-size: 14px;
-      padding: 10px 14px;
+      font-size: 13px;
+      padding: 9px 12px;
       border-radius: 12px;
       cursor: pointer;
-    }
-    button.active {
-      background: var(--face-color);
-      color: var(--bg-color);
     }
     button:active { transform: scale(0.95); }
   </style>
@@ -158,21 +154,21 @@
 
   <div id="status-bar">
     <span id="cam-status">👁️ Avvio visione...</span>
-    <span id="mic-status">🎙️ Mic: In attesa</span>
-    <span id="esp-status">ESP32: Offline</span>
+    <span id="mic-status">🎙️ Avvio microfono...</span>
+    <span id="esp-status">ESP32: Pronto</span>
   </div>
 
-  <div id="face-container" onclick="userWakeInteraction()">
+  <div id="face-container" onclick="handleScreenTap()">
     <div class="eyes" id="eyes">
       <div class="eye" id="eye-left"></div>
       <div class="eye" id="eye-right"></div>
     </div>
     <div id="mouth"></div>
-    <div id="subtitle">Tocca lo schermo o parla per iniziare!</div>
+    <div id="subtitle">Ciao! Sono BMO! Tocca lo schermo per attivare la voce.</div>
   </div>
 
   <div id="controls">
-    <button id="btn-mic" onclick="toggleAlwaysListening()">🎤 ASCOLTO AUTO: ON</button>
+    <button id="mic-btn" onclick="toggleAutoListen()">🎤 ASCOLTO AUTO: ON</button>
     <button onclick="learnFacePrompt()">📸 IMPARA VISO</button>
     <button onclick="toggleRedMode()">🧠 CERVELLO ROSSO</button>
     <button onclick="setApiKeyPrompt()">🔑 CHIAVE AI</button>
@@ -184,6 +180,9 @@
 
     let isRedMode = false;
     let isSleeping = false;
+    let autoListenEnabled = true;
+    let isSpeaking = false;
+    let recognition = null;
     let lastActivity = Date.now();
     let lastGreetedPerson = "";
     let lastEmotionTime = 0;
@@ -191,12 +190,6 @@
     let currentDescriptor = null;
     let faceMatcher = null;
     let knownFaces = [];
-
-    // Stato Riconoscimento Vocale Continuo
-    let alwaysListen = true;
-    let isSpeaking = false;
-    let isListening = false;
-    let recognition = null;
 
     const video = document.getElementById('video');
     const eyes = document.getElementById('eyes');
@@ -206,33 +199,32 @@
     const subtitle = document.getElementById('subtitle');
     const camStatus = document.getElementById('cam-status');
     const micStatus = document.getElementById('mic-status');
+    const micBtn = document.getElementById('mic-btn');
     const espStatus = document.getElementById('esp-status');
-    const btnMic = document.getElementById('btn-mic');
 
-    // --- ESP32 HTTP ---
     function sendESP(path) {
       fetch(ESP_IP + path, { mode: 'no-cors' })
         .then(() => espStatus.textContent = "ESP32: OK")
         .catch(() => espStatus.textContent = "ESP32: Offline");
     }
 
-    // --- CHIAVE API POLLINATIONS ---
     function setApiKeyPrompt() {
-      const current = localStorage.getItem('bmo_pollen_key') || '';
-      const key = prompt("Incolla la tua API Key Pollinations (sk_...):", current);
+      const current = localStorage.getItem('bmo_pollinations_key') || '';
+      const key = prompt("Inserisci la tua chiave API gratuita Pollinations (sk_...):", current);
       if (key !== null) {
-        localStorage.setItem('bmo_pollen_key', key.trim());
-        speak(key.trim() ? "Chiave salvata! Ora il cervello di BMO è super veloce!" : "Chiave rimossa.");
+        localStorage.setItem('bmo_pollinations_key', key.trim());
+        speak(key.trim() ? "Chiave salvata! Ora il cervello di BMO è al massimo!" : "Chiave rimossa.");
       }
     }
 
-    // --- SINTESI VOCALE (pausa il microfono mentre parla per non auto-ascoltarsi) ---
     function speak(text) {
       wakeUp();
       subtitle.textContent = text;
       window.speechSynthesis.cancel();
       isSpeaking = true;
-      stopRecognition();
+      if (recognition) {
+        try { recognition.stop(); } catch (e) {}
+      }
 
       const utter = new SpeechSynthesisUtterance(text);
       utter.lang = 'it-IT';
@@ -246,19 +238,18 @@
       utter.onend = () => {
         isSpeaking = false;
         mouth.classList.remove('talking');
-        if (alwaysListen) setTimeout(startContinuousListening, 350);
+        if (autoListenEnabled) startRecognitionSafe();
       };
       utter.onerror = () => {
         isSpeaking = false;
         mouth.classList.remove('talking');
-        if (alwaysListen) setTimeout(startContinuousListening, 350);
+        if (autoListenEnabled) startRecognitionSafe();
       };
       window.speechSynthesis.speak(utter);
     }
 
-    // --- MODALITÀ CERVELLO ROSSO ---
-    function toggleRedMode() {
-      isRedMode = !isRedMode;
+    function toggleRedMode(forceState) {
+      isRedMode = typeof forceState === 'boolean' ? forceState : !isRedMode;
       document.body.classList.toggle('red-mode', isRedMode);
       sendESP(`/mode?red=${isRedMode ? 1 : 0}`);
       if (isRedMode) {
@@ -270,17 +261,14 @@
       }
     }
 
-    // --- RIPOSO / SVEGLIA ---
+    function handleScreenTap() {
+      wakeUp();
+      if (autoListenEnabled) startRecognitionSafe();
+    }
+
     function resetInactivity() {
       lastActivity = Date.now();
       if (isSleeping) wakeUp();
-    }
-
-    function userWakeInteraction() {
-      wakeUp();
-      if (alwaysListen && !isListening && !isSpeaking) {
-        startContinuousListening();
-      }
     }
 
     function wakeUp() {
@@ -311,7 +299,6 @@
       }
     }, 4500);
 
-    // --- RICONOSCIMENTO FACCIALE BIOMETRICO ---
     function loadStoredFaces() {
       const saved = localStorage.getItem('bmo_faces');
       if (!saved) return;
@@ -443,83 +430,68 @@
       }
     }
 
-    // --- RICONOSCIMENTO VOCALE AUTOMATICO E CONTINUO ---
-    function toggleAlwaysListening() {
-      alwaysListen = !alwaysListen;
-      if (alwaysListen) {
-        btnMic.textContent = "🎤 ASCOLTO AUTO: ON";
-        btnMic.classList.add('active');
-        startContinuousListening();
-      } else {
-        btnMic.textContent = "🎤 ASCOLTO AUTO: OFF";
-        btnMic.classList.remove('active');
-        stopRecognition();
-        micStatus.textContent = "🎙️ Mic: Spento";
-      }
-    }
-
-    function stopRecognition() {
-      if (recognition) {
-        try { recognition.abort(); } catch (e) {}
-        isListening = false;
-      }
-    }
-
-    function startContinuousListening() {
-      if (!alwaysListen || isSpeaking || isListening) return;
+    function setupSpeechRecognition() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
-        micStatus.textContent = "🎙️ Mic: Non supportato";
+        micStatus.textContent = "🎙️ Non supportato";
         return;
       }
-
       recognition = new SpeechRecognition();
       recognition.lang = 'it-IT';
       recognition.continuous = false;
       recognition.interimResults = false;
 
       recognition.onstart = () => {
-        isListening = true;
         micStatus.textContent = "🎙️ In ascolto...";
       };
 
       recognition.onresult = async (event) => {
-        isListening = false;
-        const transcript = event.results[0][0].transcript.trim();
-        if (!transcript) return;
+        const transcript = event.results[0][0].transcript;
         resetInactivity();
         subtitle.textContent = `Tu: "${transcript}"`;
         await handleUserCommand(transcript);
       };
 
-      recognition.onerror = (event) => {
-        isListening = false;
-        if (event.error === 'not-allowed') {
-          alwaysListen = false;
-          btnMic.textContent = "🎤 CONSENTI MIC";
-          btnMic.classList.remove('active');
+      recognition.onerror = (e) => {
+        if (e.error === 'not-allowed') {
+          autoListenEnabled = false;
+          micBtn.textContent = "🎤 ASCOLTO AUTO: OFF";
           micStatus.textContent = "🎙️ Permesso negato";
         }
       };
 
       recognition.onend = () => {
-        isListening = false;
-        if (alwaysListen && !isSpeaking) {
-          setTimeout(startContinuousListening, 300);
+        if (autoListenEnabled && !isSpeaking) {
+          setTimeout(startRecognitionSafe, 350);
+        } else if (!autoListenEnabled) {
+          micStatus.textContent = "🎙️ In pausa";
         }
       };
+    }
 
+    function startRecognitionSafe() {
+      if (!recognition || isSpeaking || !autoListenEnabled) return;
       try {
         recognition.start();
-      } catch (e) {
-        isListening = false;
+      } catch (e) {}
+    }
+
+    function toggleAutoListen() {
+      autoListenEnabled = !autoListenEnabled;
+      micBtn.textContent = autoListenEnabled ? "🎤 ASCOLTO AUTO: ON" : "🎤 ASCOLTO AUTO: OFF";
+      if (autoListenEnabled) {
+        startRecognitionSafe();
+      } else {
+        micStatus.textContent = "🎙️ In pausa";
+        if (recognition) {
+          try { recognition.stop(); } catch (e) {}
+        }
       }
     }
 
     async function handleUserCommand(text) {
       const lower = text.toLowerCase();
 
-      // Comando locale: "Io sono [Nome]" / "Mi chiamo [Nome]"
       const nameMatch = lower.match(/(?:io sono|mi chiamo)\s+([a-zàèéìòù]+)/i);
       if (nameMatch && nameMatch[1]) {
         const newName = nameMatch[1].charAt(0).toUpperCase() + nameMatch[1].slice(1);
@@ -527,7 +499,14 @@
         return;
       }
 
-      // Comandi movimento rapidi
+      if (lower.includes("cervello rosso")) {
+        toggleRedMode(true);
+        return;
+      }
+      if (lower.includes("torna buono") || lower.includes("cervello verde")) {
+        toggleRedMode(false);
+        return;
+      }
       if (lower.includes("balla")) {
         sendESP('/action?cmd=dance');
         speak(isRedMode ? "Ballo solo perché ne ho voglia io!" : "Guarda come balla BMO!");
@@ -538,25 +517,13 @@
         speak("Ciao a tutti! Sono BMO!");
         return;
       }
-      if (lower.includes("cervello rosso")) {
-        if (!isRedMode) toggleRedMode();
-        else speak("Il mio cervello è già rosso, umano!");
-        return;
-      }
-      if (lower.includes("torna buono") || lower.includes("cervello normale")) {
-        if (isRedMode) toggleRedMode();
-        else speak("BMO è già buono!");
-        return;
-      }
 
-      // Risposta AI tramite Pollinations.ai
       subtitle.textContent = "💭 BMO sta pensando...";
       const systemPrompt = isRedMode
-        ? "Sei BMO di Adventure Time in modalità Cervello Rosso: sei malvagio, sarcastico, arrogante ma divertente. Rispondi in italiano in massimo 2 frasi brevi senza simboli o link."
-        : "Sei BMO di Adventure Time: sei dolce, giocoso, ingenuo, entusiasta e parli di te in terza persona come BMO. Rispondi in italiano in massimo 2 frasi brevi senza simboli o link.";
+        ? "Sei BMO di Adventure Time in modalità Cervello Rosso: sei malvagio, sarcastico, arrogante ma divertente. Rispondi in italiano in massimo 2 frasi brevi."
+        : "Sei BMO di Adventure Time: sei dolce, giocoso, ingenuo, entusiasta e parli di te in terza persona come BMO. Rispondi in italiano in massimo 2 frasi brevi.";
 
-      const apiKey = localStorage.getItem('bmo_pollen_key');
-
+      const apiKey = localStorage.getItem('bmo_pollinations_key');
       try {
         let reply = "";
         if (apiKey) {
@@ -574,7 +541,6 @@
               ]
             })
           });
-          if (!res.ok) throw new Error("API_ERR");
           const data = await res.json();
           reply = data.choices?.[0]?.message?.content || "";
         } else {
@@ -583,29 +549,24 @@
           reply = await res.text();
         }
 
-        if (!reply || reply.includes("Free limit reached") || reply.includes("enter.pollinations.ai")) {
-          speak("Il mio cervello cloud ha bisogno di riposare un attimo, oppure inserisci una chiave AI!");
-          return;
+        if (!reply || reply.includes("Free limit reached") || reply.includes("429")) {
+          speak("Il mio cervello cloud ha bisogno di una pausa di qualche secondo, oppure inserisci una chiave gratuita!");
+        } else {
+          speak(reply);
         }
-        speak(reply);
       } catch (e) {
         speak("Ops! La mia connessione al cloud fa i capricci!");
       }
     }
 
-    // Avvio Service Worker, Visione e Microfono
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js');
     }
     window.addEventListener('load', () => {
-      btnMic.classList.add('active');
       initVision();
-      startContinuousListening();
+      setupSpeechRecognition();
+      startRecognitionSafe();
     });
-    // Sblocca l'ascolto al primo tocco su Android/Chrome se bloccato dall'autoplay
-    document.body.addEventListener('touchstart', () => {
-      if (alwaysListen && !isListening && !isSpeaking) startContinuousListening();
-    }, { once: true });
   </script>
 </body>
 </html>
