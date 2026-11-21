@@ -13,13 +13,11 @@
     :root {
       --bg-color: #63d2b4;
       --face-color: #0b261f;
-      --accent-color: #164a3d;
       --btn-bg: rgba(11, 38, 31, 0.15);
     }
     body.red-mode {
       --bg-color: #d91e2a;
       --face-color: #140002;
-      --accent-color: #4a040a;
       --btn-bg: rgba(20, 0, 2, 0.25);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
@@ -47,7 +45,7 @@
     }
     #status-bar {
       width: 100%;
-      padding: 10px 16px;
+      padding: 12px 16px;
       display: flex;
       justify-content: space-between;
       font-size: 13px;
@@ -61,12 +59,11 @@
       justify-content: center;
       align-items: center;
       width: 100%;
-      position: relative;
     }
     .eyes {
       display: flex;
-      gap: 110px;
-      margin-bottom: 45px;
+      gap: 95px;
+      margin-bottom: 42px;
       transition: transform 0.15s ease-out;
     }
     .eye {
@@ -82,20 +79,19 @@
       border-radius: 50% 50% 45% 45%;
       clip-path: polygon(0 25%, 100% 0, 100% 100%, 0% 100%);
     }
-    .eyes .eye:last-child { clip-path: none; }
     body.red-mode .eyes .eye:last-child {
       clip-path: polygon(0 0, 100% 25%, 100% 100%, 0% 100%);
     }
     #mouth {
-      width: 90px;
-      height: 42px;
+      width: 86px;
+      height: 40px;
       border: 7px solid var(--face-color);
       border-top: none;
       border-radius: 0 0 50px 50px;
       transition: all 0.2s;
     }
     #mouth.talking {
-      height: 48px;
+      height: 46px;
       background-color: var(--face-color);
       border-radius: 25px;
       animation: talk 0.25s infinite alternate;
@@ -118,11 +114,11 @@
     }
     #subtitle {
       min-height: 48px;
-      max-width: 85%;
+      max-width: 88%;
       text-align: center;
-      font-size: 18px;
+      font-size: 17px;
       font-weight: bold;
-      margin-top: 30px;
+      margin-top: 28px;
       padding: 8px 14px;
       border-radius: 12px;
       background: var(--btn-bg);
@@ -153,25 +149,25 @@
   <video id="video" autoplay muted playsinline></video>
 
   <div id="status-bar">
-    <span id="cam-status">👁️ Avvio visione...</span>
-    <span id="mic-status">🎙️ Avvio microfono...</span>
-    <span id="esp-status">ESP32: Pronto</span>
+    <span id="cam-status">👁️ Visione...</span>
+    <span id="mic-status">🎙️ Mic: Premi PARLA</span>
+    <span id="esp-status">ESP32</span>
   </div>
 
-  <div id="face-container" onclick="handleScreenTap()">
+  <div id="face-container" onclick="wakeUp()">
     <div class="eyes" id="eyes">
       <div class="eye" id="eye-left"></div>
       <div class="eye" id="eye-right"></div>
     </div>
     <div id="mouth"></div>
-    <div id="subtitle">Ciao! Sono BMO! Tocca lo schermo per attivare la voce.</div>
+    <div id="subtitle">Ciao! Sono BMO!</div>
   </div>
 
   <div id="controls">
-    <button id="mic-btn" onclick="toggleAutoListen()">🎤 ASCOLTO AUTO: ON</button>
-    <button onclick="learnFacePrompt()">📸 IMPARA VISO</button>
-    <button onclick="toggleRedMode()">🧠 CERVELLO ROSSO</button>
-    <button onclick="setApiKeyPrompt()">🔑 CHIAVE AI</button>
+    <button id="mic-btn" onclick="toggleMic()">🎤 PARLA</button>
+    <button onclick="learnFacePrompt()">📸 VISO</button>
+    <button onclick="toggleRedMode()">🧠 ROSSO</button>
+    <button onclick="setApiKey()">🔑 KEY</button>
   </div>
 
   <script>
@@ -180,9 +176,10 @@
 
     let isRedMode = false;
     let isSleeping = false;
-    let autoListenEnabled = true;
     let isSpeaking = false;
+    let autoListen = false;
     let recognition = null;
+    let isRecognizing = false;
     let lastActivity = Date.now();
     let lastGreetedPerson = "";
     let lastEmotionTime = 0;
@@ -199,57 +196,130 @@
     const subtitle = document.getElementById('subtitle');
     const camStatus = document.getElementById('cam-status');
     const micStatus = document.getElementById('mic-status');
-    const micBtn = document.getElementById('mic-btn');
     const espStatus = document.getElementById('esp-status');
+    const micBtn = document.getElementById('mic-btn');
 
     function sendESP(path) {
       fetch(ESP_IP + path, { mode: 'no-cors' })
         .then(() => espStatus.textContent = "ESP32: OK")
-        .catch(() => espStatus.textContent = "ESP32: Offline");
+        .catch(() => espStatus.textContent = "ESP32: Off");
     }
 
-    function setApiKeyPrompt() {
+    function setApiKey() {
       const current = localStorage.getItem('bmo_pollinations_key') || '';
-      const key = prompt("Inserisci la tua chiave API gratuita Pollinations (sk_...):", current);
+      const key = prompt("Incolla la tua chiave API Pollinations (sk_...):", current);
       if (key !== null) {
         localStorage.setItem('bmo_pollinations_key', key.trim());
-        speak(key.trim() ? "Chiave salvata! Ora il cervello di BMO è al massimo!" : "Chiave rimossa.");
+        speak(key.trim() ? "Chiave salvata!" : "Chiave rimossa.");
       }
     }
 
+    // --- SINTESI VOCALE ---
     function speak(text) {
       wakeUp();
       subtitle.textContent = text;
       window.speechSynthesis.cancel();
       isSpeaking = true;
-      if (recognition) {
-        try { recognition.stop(); } catch (e) {}
-      }
+      stopRecognition();
 
       const utter = new SpeechSynthesisUtterance(text);
       utter.lang = 'it-IT';
       utter.pitch = isRedMode ? 0.65 : 1.35;
       utter.rate = isRedMode ? 0.92 : 1.08;
 
-      utter.onstart = () => {
-        isSpeaking = true;
-        mouth.classList.add('talking');
-      };
+      utter.onstart = () => mouth.classList.add('talking');
       utter.onend = () => {
-        isSpeaking = false;
         mouth.classList.remove('talking');
-        if (autoListenEnabled) startRecognitionSafe();
+        isSpeaking = false;
+        if (autoListen) setTimeout(startRecognition, 500);
       };
       utter.onerror = () => {
-        isSpeaking = false;
         mouth.classList.remove('talking');
-        if (autoListenEnabled) startRecognitionSafe();
+        isSpeaking = false;
       };
       window.speechSynthesis.speak(utter);
     }
 
-    function toggleRedMode(forceState) {
-      isRedMode = typeof forceState === 'boolean' ? forceState : !isRedMode;
+    // --- MICROFONO SENZA BEEP CONTINUI ---
+    function initSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        micStatus.textContent = "🎙️ Non supp.";
+        return;
+      }
+      recognition = new SpeechRecognition();
+      recognition.lang = 'it-IT';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      recognition.onstart = () => {
+        isRecognizing = true;
+        micStatus.textContent = "🎙️ Ti ascolto...";
+      };
+
+      recognition.onresult = async (event) => {
+        const transcript = event.results[0][0].transcript;
+        subtitle.textContent = `Tu: "${transcript}"`;
+        autoListen = false;
+        micBtn.textContent = "🎤 PARLA";
+        await handleUserCommand(transcript);
+      };
+
+      recognition.onerror = (e) => {
+        isRecognizing = false;
+        if (e.error === 'not-allowed') {
+          autoListen = false;
+          micBtn.textContent = "🎤 PARLA";
+          micStatus.textContent = "🎙️ Negato";
+        } else {
+          micStatus.textContent = "🎙️ Silenzio";
+        }
+      };
+
+      recognition.onend = () => {
+        isRecognizing = false;
+        if (!autoListen) {
+          micStatus.textContent = "🎙️ Premi PARLA";
+        } else if (!isSpeaking) {
+          // Attesa di 2.5 secondi prima di riavviare per evitare il loop di beep Android
+          setTimeout(() => {
+            if (autoListen && !isSpeaking && !isRecognizing) startRecognition();
+          }, 2500);
+        }
+      };
+    }
+
+    function startRecognition() {
+      if (!recognition) initSpeechRecognition();
+      if (!recognition || isRecognizing || isSpeaking) return;
+      try {
+        recognition.start();
+      } catch (e) {}
+    }
+
+    function stopRecognition() {
+      if (recognition && isRecognizing) {
+        try { recognition.stop(); } catch (e) {}
+      }
+    }
+
+    function toggleMic() {
+      wakeUp();
+      if (!autoListen) {
+        autoListen = true;
+        micBtn.textContent = "⏹️ STOP MIC";
+        startRecognition();
+      } else {
+        autoListen = false;
+        micBtn.textContent = "🎤 PARLA";
+        stopRecognition();
+        micStatus.textContent = "🎙️ Pausa";
+      }
+    }
+
+    // --- MODALITÀ CERVELLO ROSSO ---
+    function toggleRedMode() {
+      isRedMode = !isRedMode;
       document.body.classList.toggle('red-mode', isRedMode);
       sendESP(`/mode?red=${isRedMode ? 1 : 0}`);
       if (isRedMode) {
@@ -261,11 +331,7 @@
       }
     }
 
-    function handleScreenTap() {
-      wakeUp();
-      if (autoListenEnabled) startRecognitionSafe();
-    }
-
+    // --- RIPOSO / SVEGLIA ---
     function resetInactivity() {
       lastActivity = Date.now();
       if (isSleeping) wakeUp();
@@ -299,6 +365,7 @@
       }
     }, 4500);
 
+    // --- VISIONE ARTIFICIALE ---
     function loadStoredFaces() {
       const saved = localStorage.getItem('bmo_faces');
       if (!saved) return;
@@ -311,12 +378,12 @@
         if (knownFaces.length > 0) {
           faceMatcher = new faceapi.FaceMatcher(knownFaces, 0.55);
         }
-      } catch (e) { console.error(e); }
+      } catch (e) {}
     }
 
     function saveFace(name, descriptor) {
       if (!descriptor) {
-        speak("Non riesco a vederti bene! Mettiti davanti alla fotocamera.");
+        speak("Non ti vedo bene! Mettiti davanti alla fotocamera.");
         return;
       }
       const cleanName = name.trim();
@@ -356,10 +423,10 @@
         loadStoredFaces();
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
         video.srcObject = stream;
-        camStatus.textContent = "👁️ Visione attiva";
+        camStatus.textContent = "👁️ Attiva";
         setInterval(detectFaceLoop, 600);
       } catch (err) {
-        camStatus.textContent = "⚠️ Fotocamera non disponibile";
+        camStatus.textContent = "⚠️ No Cam";
       }
     }
 
@@ -430,65 +497,7 @@
       }
     }
 
-    function setupSpeechRecognition() {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SpeechRecognition) {
-        micStatus.textContent = "🎙️ Non supportato";
-        return;
-      }
-      recognition = new SpeechRecognition();
-      recognition.lang = 'it-IT';
-      recognition.continuous = false;
-      recognition.interimResults = false;
-
-      recognition.onstart = () => {
-        micStatus.textContent = "🎙️ In ascolto...";
-      };
-
-      recognition.onresult = async (event) => {
-        const transcript = event.results[0][0].transcript;
-        resetInactivity();
-        subtitle.textContent = `Tu: "${transcript}"`;
-        await handleUserCommand(transcript);
-      };
-
-      recognition.onerror = (e) => {
-        if (e.error === 'not-allowed') {
-          autoListenEnabled = false;
-          micBtn.textContent = "🎤 ASCOLTO AUTO: OFF";
-          micStatus.textContent = "🎙️ Permesso negato";
-        }
-      };
-
-      recognition.onend = () => {
-        if (autoListenEnabled && !isSpeaking) {
-          setTimeout(startRecognitionSafe, 350);
-        } else if (!autoListenEnabled) {
-          micStatus.textContent = "🎙️ In pausa";
-        }
-      };
-    }
-
-    function startRecognitionSafe() {
-      if (!recognition || isSpeaking || !autoListenEnabled) return;
-      try {
-        recognition.start();
-      } catch (e) {}
-    }
-
-    function toggleAutoListen() {
-      autoListenEnabled = !autoListenEnabled;
-      micBtn.textContent = autoListenEnabled ? "🎤 ASCOLTO AUTO: ON" : "🎤 ASCOLTO AUTO: OFF";
-      if (autoListenEnabled) {
-        startRecognitionSafe();
-      } else {
-        micStatus.textContent = "🎙️ In pausa";
-        if (recognition) {
-          try { recognition.stop(); } catch (e) {}
-        }
-      }
-    }
-
+    // --- COMANDI VOCALI & AI ---
     async function handleUserCommand(text) {
       const lower = text.toLowerCase();
 
@@ -499,12 +508,12 @@
         return;
       }
 
-      if (lower.includes("cervello rosso")) {
-        toggleRedMode(true);
+      if (lower.includes("cervello rosso") || lower.includes("modalità rossa")) {
+        if (!isRedMode) toggleRedMode();
         return;
       }
-      if (lower.includes("torna buono") || lower.includes("cervello verde")) {
-        toggleRedMode(false);
+      if (lower.includes("torna buono") || lower.includes("modalità normale")) {
+        if (isRedMode) toggleRedMode();
         return;
       }
       if (lower.includes("balla")) {
@@ -518,10 +527,10 @@
         return;
       }
 
-      subtitle.textContent = "💭 BMO sta pensando...";
+      subtitle.textContent = "💭 BMO pensa...";
       const systemPrompt = isRedMode
-        ? "Sei BMO di Adventure Time in modalità Cervello Rosso: sei malvagio, sarcastico, arrogante ma divertente. Rispondi in italiano in massimo 2 frasi brevi."
-        : "Sei BMO di Adventure Time: sei dolce, giocoso, ingenuo, entusiasta e parli di te in terza persona come BMO. Rispondi in italiano in massimo 2 frasi brevi.";
+        ? "Sei BMO di Adventure Time in modalità Cervello Rosso: malvagio, sarcastico, arrogante ma divertente. Rispondi in italiano in massimo 2 frasi brevi."
+        : "Sei BMO di Adventure Time: dolce, giocoso, ingenuo, entusiasta e parli di te in terza persona come BMO. Rispondi in italiano in massimo 2 frasi brevi.";
 
       const apiKey = localStorage.getItem('bmo_pollinations_key');
       try {
@@ -542,15 +551,15 @@
             })
           });
           const data = await res.json();
-          reply = data.choices?.[0]?.message?.content || "";
+          reply = data.choices[0].message.content;
         } else {
           const url = `https://text.pollinations.ai/${encodeURIComponent(text)}?system=${encodeURIComponent(systemPrompt)}`;
           const res = await fetch(url);
           reply = await res.text();
         }
 
-        if (!reply || reply.includes("Free limit reached") || reply.includes("429")) {
-          speak("Il mio cervello cloud ha bisogno di una pausa di qualche secondo, oppure inserisci una chiave gratuita!");
+        if (reply.includes("Free limit reached") || reply.includes("Rate limit")) {
+          speak("Aspetta qualche secondo prima di farmi un'altra domanda, oppure inserisci una chiave gratuita!");
         } else {
           speak(reply);
         }
@@ -563,9 +572,8 @@
       navigator.serviceWorker.register('sw.js');
     }
     window.addEventListener('load', () => {
+      initSpeechRecognition();
       initVision();
-      setupSpeechRecognition();
-      startRecognitionSafe();
     });
   </script>
 </body>
